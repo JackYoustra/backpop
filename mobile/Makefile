@@ -7,7 +7,7 @@ endif
 
 run: install
     # Todo: change the bundle identifier (then remove this comment :P)
-	xcrun simctl launch --console $(DEVICE) me.nikl.bevygame
+	xcrun simctl launch --console $(DEVICE) jackyoustra.backpop
 
 boot-sim:
 	xcrun simctl boot $(DEVICE) || true

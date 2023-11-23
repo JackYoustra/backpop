@@ -5,7 +5,7 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy::winit::WinitWindows;
 use bevy::DefaultPlugins;
-use bevy_game::GamePlugin; // ToDo: Replace bevy_game with your new crate name.
+use backpop::GamePlugin; // ToDo: Replace bevy_game with your new crate name.
 use std::io::Cursor;
 use winit::window::Icon;
 
@@ -37,7 +37,13 @@ fn set_window_icon(
     primary_window: Query<Entity, With<PrimaryWindow>>,
 ) {
     let primary_entity = primary_window.single();
-    let primary = windows.get_window(primary_entity).unwrap();
+    let primary = match windows.get_window(primary_entity) {
+        Some(w) => w,
+        None => {
+            warn!("window not found, unable to set icon");
+            return;
+        }
+    };
     let icon_buf = Cursor::new(include_bytes!(
         "../build/macos/AppIcon.iconset/icon_256x256.png"
     ));

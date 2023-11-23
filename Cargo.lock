@@ -292,6 +292,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d468802bab17cbc0cc575e9b053f41e72aa36bfa6b7f55e3529ffa43161b97fa"
 
 [[package]]
+name = "backpop"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "bevy_asset_loader",
+ "bevy_kira_audio",
+ "embed-resource",
+ "image",
+ "rand",
+ "webbrowser",
+ "winit",
+]
+
+[[package]]
 name = "backtrace"
 version = "0.3.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -555,20 +569,6 @@ checksum = "65b9fb5a62c4e3ab70caaa839470d35fa932001b1b34b08bc7f7f1909bd2b3a7"
 dependencies = [
  "bevy_macro_utils",
  "encase_derive_impl",
-]
-
-[[package]]
-name = "bevy_game"
-version = "0.1.0"
-dependencies = [
- "bevy",
- "bevy_asset_loader",
- "bevy_kira_audio",
- "embed-resource",
- "image",
- "rand",
- "webbrowser",
- "winit",
 ]
 
 [[package]]
@@ -2295,8 +2295,8 @@ dependencies = [
 name = "mobile"
 version = "0.1.0"
 dependencies = [
+ "backpop",
  "bevy",
- "bevy_game",
  "cpal",
 ]
 

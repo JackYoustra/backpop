@@ -8,6 +8,7 @@ use bevy::DefaultPlugins;
 use backpop::GamePlugin; // ToDo: Replace bevy_game with your new crate name.
 use std::io::Cursor;
 use winit::window::Icon;
+use bevy_inspector_egui::quick::WorldInspectorPlugin;
 
 fn main() {
     App::new()
@@ -28,6 +29,7 @@ fn main() {
         }))
         .add_plugins(GamePlugin)
         .add_systems(Startup, set_window_icon)
+        // .add_plugins(WorldInspectorPlugin::new())
         .run();
 }
 

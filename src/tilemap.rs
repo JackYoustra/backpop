@@ -5,6 +5,7 @@ use crate::loading::TextureAssets;
 use bevy_ecs_tilemap::prelude::*;
 
 use crate::GameState;
+use crate::player::Player;
 
 pub struct TilePlugin;
 
@@ -15,18 +16,19 @@ pub struct Tilemap;
 /// Player logic is only active during the State `GameState::Playing`
 impl Plugin for crate::tilemap::TilePlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(OnEnter(GameState::Playing), crate::tilemap::spawn_tilemap);
+        app
+            .add_systems(OnEnter(GameState::Playing), crate::tilemap::spawn_tilemap);
     }
 }
 
 fn spawn_tilemap(
     mut commands: Commands,
-    textures: Res<TextureAssets>,
+    asset_server: Res<AssetServer>,
     #[cfg(all(not(feature = "atlas"), feature = "render"))] array_texture_loader: Res<
         ArrayTextureLoader,
     >,
 ) {
-    let tile_image = textures.bevy.clone();
+    let tile_image: Handle<Image> = asset_server.load("textures/tiles.png");
     // the color black Image::from_color(Color::rgb(0.0, 0.0, 0.0));
     // let tile_image = Handle::
 
@@ -71,7 +73,7 @@ fn spawn_tilemap(
         map_type,
         size: map_size,
         storage: tile_storage,
-        // texture: TilemapTexture::Single(tile_image),
+        texture: TilemapTexture::Single(tile_image),
         tile_size,
         transform,
         ..Default::default()

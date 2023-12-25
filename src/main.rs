@@ -7,6 +7,7 @@ use bevy::winit::WinitWindows;
 use bevy::DefaultPlugins;
 use backpop::GamePlugin; // ToDo: Replace bevy_game with your new crate name.
 use std::io::Cursor;
+use bevy_ecs_tilemap::TilemapPlugin;
 use winit::window::Icon;
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
 
@@ -26,7 +27,8 @@ fn main() {
                 ..default()
             }),
             ..default()
-        }))
+        }).set(ImagePlugin::default_nearest()))
+        .add_plugins(TilemapPlugin)
         .add_plugins(GamePlugin)
         .add_systems(Startup, set_window_icon)
         // .add_plugins(WorldInspectorPlugin::new())

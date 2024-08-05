@@ -1,6 +1,7 @@
 // disable console on windows for release builds
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use bevy::asset::AssetMetaCheck;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy::winit::WinitWindows;
@@ -14,20 +15,26 @@ use bevy_inspector_egui::quick::WorldInspectorPlugin;
 fn main() {
     App::new()
         .insert_resource(Msaa::Off)
-        .insert_resource(ClearColor(Color::rgb(0.4, 0.4, 0.4)))
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: "Backpop".to_string(), // ToDo
-                // Bind to canvas included in `index.html`
-                canvas: Some("#bevy".to_owned()),
-                // The canvas size is constrained in index.html and build/web/styles.css
-                fit_canvas_to_parent: true,
-                // Tells wasm not to override default event handling, like F5 and Ctrl+R
-                prevent_default_event_handling: false,
-                ..default()
-            }),
-            ..default()
-        }).set(ImagePlugin::default_nearest()))
+        .insert_resource(ClearColor(Color::linear_rgb(0.4, 0.4, 0.4)))
+        .add_plugins(
+            DefaultPlugins
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
+                        title: "Backpop".to_string(), // ToDo
+                        // Bind to canvas included in `index.html`
+                        canvas: Some("#bevy".to_owned()),
+                        fit_canvas_to_parent: true,
+                        // Tells wasm not to override default event handling, like F5 and Ctrl+R
+                        prevent_default_event_handling: false,
+                        ..default()
+                    }),
+                    ..default()
+                })
+                .set(AssetPlugin {
+                    meta_check: AssetMetaCheck::Never,
+                    ..default()
+                }),
+        )
         .add_plugins(GamePlugin)
         .add_systems(Startup, set_window_icon)
         // .add_plugins(WorldInspectorPlugin::new())
@@ -40,12 +47,8 @@ fn set_window_icon(
     primary_window: Query<Entity, With<PrimaryWindow>>,
 ) {
     let primary_entity = primary_window.single();
-    let primary = match windows.get_window(primary_entity) {
-        Some(w) => w,
-        None => {
-            warn!("window not found, unable to set icon");
-            return;
-        }
+    let Some(primary) = windows.get_window(primary_entity) else {
+        return;
     };
     let icon_buf = Cursor::new(include_bytes!(
         "../build/macos/AppIcon.iconset/icon_256x256.png"

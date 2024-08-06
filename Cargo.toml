@@ -70,8 +70,8 @@ bevy_asset_loader = { version = "0.21" }
 rand = { version = "0.8.3" }
 webbrowser = { version = "1", features = ["hardened"] }
 
-bevy_ecs_tilemap = { git = "https://github.com/divark/bevy_ecs_tilemap", branch = "0.12-fixes" }
-bevy-inspector-egui = "0.21.0"
+bevy_ecs_tilemap = "0.14.0"
+bevy-inspector-egui = "0.25"
 
 # keep the following in sync with Bevy's dependencies
 winit = { version = "0.30", default-features = false }

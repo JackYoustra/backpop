@@ -1,5 +1,6 @@
 // src/tilemap.rs
 
+use bevy::ecs::schedule::ScheduleLabel;
 use bevy::prelude::*;
 use bevy_ecs_tilemap::prelude::*;
 use rand::Rng;
@@ -13,20 +14,22 @@ pub struct Tilemap;
 
 impl Plugin for TilePlugin {
     fn build(&self, app: &mut App) {
-        app
-            .add_plugins(TilemapPlugin)
-            .init_resource::<GameClock>() // Add this line
+        app.add_plugins(TilemapPlugin)
+            .init_resource::<GameClock>()
             .init_resource::<JobMarket>()
             .init_resource::<HousingMarket>()
             .add_systems(OnEnter(GameState::Playing), spawn_tilemap)
             .add_systems(Update, (
-                update_game_time,
-                update_pops,
-                move_pops,
+                update_fixed_time,
                 update_pop_visuals,
                 handle_speed_input,
+            ).run_if(in_state(GameState::Playing)))
+            .add_systems(FixedUpdate, (
+                update_game_clock,
+                update_pops,
+                move_pops,
                 manage_markets,
-                assign_jobs_and_housing,  // Add this line
+                assign_jobs_and_housing,
             ).run_if(in_state(GameState::Playing)));
     }
 }
@@ -39,9 +42,9 @@ pub struct HouseID(u32);
 
 #[derive(Component, Default)]
 pub struct Pop {
-    pub(crate) money: f32,
-    pub(crate) hunger: f32,
-    pub(crate) energy: f32,
+    pub(crate) money: i32,
+    pub(crate) hunger: u32,
+    pub(crate) energy: u32,
     pub(crate) job: Option<Job>,
     pub(crate) home: Option<Entity>,
     position: TilePos,
@@ -90,11 +93,11 @@ use bevy::prelude::*;
 
 #[derive(Resource)]
 pub struct GameClock {
-    current_tick: u64,
-    ticks_per_hour: u64,
-    hours_per_day: u64,
-    speed: u64,
-    paused: bool,
+    pub current_tick: u64,
+    pub ticks_per_hour: u64,
+    pub hours_per_day: u64,
+    pub speed: u32,
+    pub paused: bool,
 }
 
 impl Default for GameClock {
@@ -112,7 +115,7 @@ impl Default for GameClock {
 impl GameClock {
     pub fn tick(&mut self) {
         if !self.paused {
-            self.current_tick += self.speed;
+            self.current_tick += 1;
         }
     }
 
@@ -120,20 +123,17 @@ impl GameClock {
         self.current_tick / (self.ticks_per_hour * self.hours_per_day) + 1
     }
 
-    pub fn hour(&self) -> u64 {
-        (self.current_tick / self.ticks_per_hour) % self.hours_per_day
-    }
-
-    pub fn minute(&self) -> u64 {
-        self.current_tick % self.ticks_per_hour
-    }
-
-    pub fn set_speed(&mut self, speed: u64) {
-        self.speed = speed.max(1);
+    pub fn hour(&self) -> f64 {
+        (self.current_tick % (self.ticks_per_hour * self.hours_per_day)) as f64
+            / self.ticks_per_hour as f64
     }
 
     pub fn toggle_pause(&mut self) {
         self.paused = !self.paused;
+    }
+
+    pub fn ticks_per_second(&self) -> f64 {
+        self.ticks_per_hour as f64 * self.speed as f64 / 60.0
     }
 }
 
@@ -151,10 +151,18 @@ struct PopBundle {
     pub tile_bundle: TileBundle,
 }
 
-fn update_game_clock(time: Res<Time>, mut game_clock: ResMut<GameClock>) {
-    let ticks_to_advance = (time.delta_seconds() as f64 * game_clock.speed * game_clock.ticks_per_second as f64) as u64;
-    for _ in 0..ticks_to_advance {
-        game_clock.tick();
+fn update_game_clock(mut game_clock: ResMut<GameClock>) {
+    game_clock.tick();
+}
+
+fn update_fixed_time(
+    game_clock: Res<GameClock>,
+    mut fixed_time: ResMut<Time<Fixed>>,
+) {
+    if !game_clock.paused {
+        fixed_time.set_timestep_hz(game_clock.ticks_per_second());
+    } else {
+        fixed_time.set_timestep_hz(0.0);
     }
 }
 
@@ -164,19 +172,18 @@ pub struct Building;
 
 use bevy::math::Vec2;
 
+
+// Modify the move_pops function
 fn move_pops(
     mut pop_query: Query<(&mut Pop, &mut TilePos)>,
-    time: Res<Time>,
-    game_time: Res<GameTime>,
 ) {
-    let delta = time.delta_seconds() * game_time.speed;
     for (mut pop, mut tile_pos) in pop_query.iter_mut() {
         if let Some(destination) = pop.destination {
             let current_pos = Vec2::new(tile_pos.x as f32, tile_pos.y as f32);
             let dest_pos = Vec2::new(destination.x as f32, destination.y as f32);
             let direction = (dest_pos - current_pos).normalize();
 
-            let movement = direction * delta * 0.1; // Adjust speed as needed
+            let movement = direction * 0.1; // Adjust speed as needed
             let new_pos = current_pos + movement;
 
             *tile_pos = TilePos::new(new_pos.x.round() as u32, new_pos.y.round() as u32);
@@ -194,7 +201,6 @@ fn move_pops(
 fn spawn_tilemap(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
-    mut game_time: ResMut<GameTime>,
 ) {
     let tile_size = TilemapTileSize { x: 16.0, y: 16.0 };
     let map_size = TilemapSize { x: 32, y: 32 };
@@ -232,8 +238,6 @@ fn spawn_tilemap(
         transform,
         ..default()
     });
-
-    *game_time = GameTime::default();
 }
 
 fn spawn_empty_tile(commands: &mut Commands, tile_pos: TilePos, tilemap_entity: Entity) -> Entity {
@@ -251,9 +255,9 @@ fn spawn_pop(commands: &mut Commands, tile_pos: TilePos, tilemap_entity: Entity)
     commands
         .spawn((
             Pop {
-                money: 100.0,
-                hunger: 0.0,
-                energy: 100.0,
+                money: 100,
+                hunger: 0,
+                energy: 100,
                 job: None,
                 home: None,
                 position: tile_pos,
@@ -338,6 +342,7 @@ fn spawn_restaurant(commands: &mut Commands, tile_pos: TilePos, tilemap_entity: 
 }
 
 
+// Modify the update_pops function
 fn update_pops(
     game_clock: Res<GameClock>,
     mut pop_query: Query<&mut Pop>,
@@ -345,18 +350,16 @@ fn update_pops(
     workplace_query: Query<&Workplace>,
     restaurant_query: Query<&Restaurant>,
 ) {
-    let delta_hours = 1.0 / game_clock.ticks_per_second as f64;
-
     for mut pop in pop_query.iter_mut() {
-        // Increase hunger and decrease energy over time
-        pop.hunger += 5.0 * delta_hours; // Increase hunger by 5 points per hour
-        pop.energy -= 2.5 * delta_hours; // Decrease energy by 2.5 points per hour
+        // Increase hunger and decrease energy every tick
+        pop.hunger = pop.hunger.saturating_add(1);
+        pop.energy = pop.energy.saturating_sub(1);
 
         // Update pop state and destination based on needs and time of day
-        if pop.hunger > 70.0 && pop.state != PopState::Eating {
+        if pop.hunger > 7000 && pop.state != PopState::Eating {
             pop.state = PopState::Eating;
             pop.destination = find_nearest_restaurant(&pop.position, &restaurant_query);
-        } else if pop.energy < 20.0 && pop.state != PopState::Sleeping {
+        } else if pop.energy < 2000 && pop.state != PopState::Sleeping {
             pop.state = PopState::Sleeping;
             pop.destination = pop.home.and_then(|home| house_query.get(home).ok().map(|h| h.position));
         } else if pop.state != PopState::Working && game_clock.hour() >= 9.0 && game_clock.hour() < 17.0 {
@@ -370,27 +373,27 @@ fn update_pops(
         // Handle actions based on state
         match pop.state {
             PopState::Eating => {
-                if pop.hunger > 0.0 {
-                    pop.hunger -= 20.0 * delta_hours; // Reduce hunger
-                    pop.money -= 5.0 * delta_hours; // Cost of food
+                if pop.hunger > 0 {
+                    pop.hunger = pop.hunger.saturating_sub(20);
+                    pop.money = pop.money.saturating_sub(1); // Cost of food
                 } else {
                     pop.state = PopState::Idle;
                     pop.destination = None;
                 }
             }
             PopState::Sleeping => {
-                pop.energy += 10.0 * delta_hours; // Recover energy
-                if pop.energy >= 100.0 {
+                pop.energy = pop.energy.saturating_add(10);
+                if pop.energy >= 10000 {
                     pop.state = PopState::Idle;
                     pop.destination = None;
                 }
                 // Sleeping consumes less food
-                pop.hunger += 1.0 * delta_hours;
+                pop.hunger = pop.hunger.saturating_add(1);
             }
             PopState::Working => {
                 if let Some(job) = &pop.job {
-                    pop.money += job.salary * delta_hours; // Earn money
-                    pop.energy -= 1.0 * delta_hours; // Work consumes some energy
+                    pop.money = pop.money.saturating_add((job.salary / (game_clock.ticks_per_hour * 8) as f32) as i32); // Assuming 8-hour workday
+                    pop.energy = pop.energy.saturating_sub(1);
                 }
             }
             PopState::Idle => {
@@ -407,15 +410,14 @@ fn update_pops(
                     ));
                 }
                 // Idle state consumes energy and increases hunger slightly
-                pop.energy -= 0.5 * delta_hours;
-                pop.hunger += 2.0 * delta_hours;
+                pop.energy = pop.energy.saturating_sub(1);
+                pop.hunger = pop.hunger.saturating_add(1);
             }
         }
 
         // Clamp values to ensure they stay within reasonable bounds
-        pop.hunger = pop.hunger.clamp(0.0, 100.0);
-        pop.energy = pop.energy.clamp(0.0, 100.0);
-        pop.money = pop.money.max(0.0); // Ensure money doesn't go negative
+        pop.hunger = pop.hunger.min(10000);
+        pop.energy = pop.energy.min(10000);
     }
 }
 
@@ -534,24 +536,20 @@ fn manage_markets(
     }
 }
 
-fn update_game_time(time: Res<Time>, mut game_time: ResMut<GameTime>) {
-    game_time.hour += time.delta_seconds() * game_time.speed * 0.5; // 0.5 means 1 real second = 30 in-game minutes at normal speed
-    while game_time.hour >= 24.0 {
-        game_time.hour -= 24.0;
-        game_time.day += 1;
-    }
-}
-
 fn handle_speed_input(
     keyboard_input: Res<ButtonInput<KeyCode>>,
-    mut game_time: ResMut<GameTime>,
+    mut game_clock: ResMut<GameClock>
 ) {
+    let speed = game_clock.speed;
     if keyboard_input.just_pressed(KeyCode::KeyZ) {
-        // Halve the speed
-        game_time.speed = (game_time.speed / 2.0).max(2f32.powf(-6f32));
+        // Decrease speed, but not below 1
+        game_clock.speed = speed.saturating_div(2).max(1);
     }
     if keyboard_input.just_pressed(KeyCode::KeyX) {
-        // Double the speed
-        game_time.speed = (game_time.speed * 2.0).min(2f32.powf(6f32));
+        // Increase speed, with some upper limit (e.g., 10)
+        game_clock.speed = speed.saturating_mul(2).min(512);
+    }
+    if keyboard_input.just_pressed(KeyCode::Space) {
+        game_clock.toggle_pause();
     }
 }

@@ -176,22 +176,41 @@ use bevy::math::Vec2;
 // Modify the move_pops function
 fn move_pops(
     mut pop_query: Query<(&mut Pop, &mut TilePos)>,
+    tilemap_query: Query<&TilemapSize>,
 ) {
+    let map_size = tilemap_query.single();
+
     for (mut pop, mut tile_pos) in pop_query.iter_mut() {
         if let Some(destination) = pop.destination {
             let current_pos = Vec2::new(tile_pos.x as f32, tile_pos.y as f32);
             let dest_pos = Vec2::new(destination.x as f32, destination.y as f32);
-            let direction = (dest_pos - current_pos).normalize();
+            let diff = dest_pos - current_pos;
 
-            let movement = direction * 0.1; // Adjust speed as needed
-            let new_pos = current_pos + movement;
+            // Decide whether to move in X or Y direction
+            let (new_x, new_y) = if diff.x.abs() >= diff.y.abs() {
+                // Move in X direction
+                (
+                    (current_pos.x + diff.x.signum()).clamp(0.0, (map_size.x - 1) as f32) as u32,
+                    current_pos.y as u32
+                )
+            } else {
+                // Move in Y direction
+                (
+                    current_pos.x as u32,
+                    (current_pos.y + diff.y.signum()).clamp(0.0, (map_size.y - 1) as f32) as u32
+                )
+            };
 
-            *tile_pos = TilePos::new(new_pos.x.round() as u32, new_pos.y.round() as u32);
-            pop.position = *tile_pos; // Update pop's internal position
+            let new_tile_pos = TilePos::new(new_x, new_y);
 
-            if current_pos.distance(dest_pos) < 0.1 {
-                *tile_pos = destination;
-                pop.position = destination;
+            // Only update if the new position is different
+            if new_tile_pos != *tile_pos {
+                *tile_pos = new_tile_pos;
+                pop.position = *tile_pos;
+            }
+
+            // Check if the pop has reached the destination
+            if *tile_pos == destination {
                 pop.destination = None;
             }
         }
@@ -349,7 +368,9 @@ fn update_pops(
     house_query: Query<&House>,
     workplace_query: Query<&Workplace>,
     restaurant_query: Query<&Restaurant>,
+    tilemap_query: Query<&TilemapSize>,
 ) {
+    let map_size = tilemap_query.single();
     for mut pop in pop_query.iter_mut() {
         // Increase hunger and decrease energy every tick
         pop.hunger = pop.hunger.saturating_add(1);
@@ -405,8 +426,8 @@ fn update_pops(
                         rand::random::<u32>() % 5
                     );
                     pop.destination = Some(TilePos::new(
-                        pop.position.x.saturating_add(random_offset.x).saturating_sub(2),
-                        pop.position.y.saturating_add(random_offset.y).saturating_sub(2)
+                        pop.position.x.saturating_add(random_offset.x).saturating_sub(2).min(map_size.x - 1),
+                        pop.position.y.saturating_add(random_offset.y).saturating_sub(2).min(map_size.y - 1),
                     ));
                 }
                 // Idle state consumes energy and increases hunger slightly
@@ -441,25 +462,28 @@ fn update_pop_visuals(
             }
         }
 
+        // Helper function to safely update tile texture
+        let mut update_tile_texture = |tile_pos: &TilePos, texture_index: u32| {
+            if tile_pos.x < tile_storage.size.x && tile_pos.y < tile_storage.size.y {
+                if let Some(tile_entity) = tile_storage.get(tile_pos) {
+                    commands.entity(tile_entity).insert(TileTextureIndex(texture_index));
+                }
+            }
+        };
+
         // Set pop positions
         for (_, tile_pos) in pop_query.iter() {
-            if let Some(tile_entity) = tile_storage.get(tile_pos) {
-                commands.entity(tile_entity).insert(TileTextureIndex(1)); // Pop texture
-            }
+            update_tile_texture(tile_pos, 1);
         }
 
         // Set house positions
         for (_, tile_pos) in house_query.iter() {
-            if let Some(tile_entity) = tile_storage.get(tile_pos) {
-                commands.entity(tile_entity).insert(TileTextureIndex(2)); // House texture
-            }
+            update_tile_texture(tile_pos, 2);
         }
 
         // Set workplace positions
         for (_, tile_pos) in workplace_query.iter() {
-            if let Some(tile_entity) = tile_storage.get(tile_pos) {
-                commands.entity(tile_entity).insert(TileTextureIndex(3)); // Workplace texture
-            }
+            update_tile_texture(tile_pos, 3);
         }
     }
 }
@@ -551,5 +575,78 @@ fn handle_speed_input(
     }
     if keyboard_input.just_pressed(KeyCode::Space) {
         game_clock.toggle_pause();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use proptest::prelude::*;
+    use bevy::prelude::*;
+    use bevy_ecs_tilemap::prelude::*;
+    use crate::tilemap::{move_pops, Pop};
+
+    proptest! {
+        #[test]
+        fn test_pop_movement(
+            start_x in 0u32..20,
+            start_y in 0u32..20,
+            dest_x in 0u32..20,
+            dest_y in 0u32..20,
+            num_ticks in 1u32..50
+        ) {
+            let mut app = App::new();
+            app.add_plugins(MinimalPlugins)
+               .add_systems(Update, move_pops);
+
+            let start_pos = TilePos::new(start_x, start_y);
+            let dest_pos = TilePos::new(dest_x, dest_y);
+
+            let pop_entity = app.world_mut().spawn((
+                Pop {
+                    position: start_pos,
+                    destination: Some(dest_pos),
+                    ..Default::default()
+                },
+                start_pos,
+            )).id();
+
+            // Run the simulation for the generated number of ticks
+            for _ in 0..num_ticks {
+                app.update();
+            }
+
+            let total_distance = ((dest_x as i32 - start_x as i32).abs() +
+                                  (dest_y as i32 - start_y as i32).abs()) as u32;
+
+            let mut query = app.world_mut().query::<(&Pop, &TilePos)>();
+            let (pop, tile_pos) = query.get(app.world_mut(), pop_entity).unwrap();
+
+            // Calculate Manhattan distance moved
+            let distance_moved = ((tile_pos.x as i32 - start_x as i32).abs() +
+                                  (tile_pos.y as i32 - start_y as i32).abs()) as u32;
+
+            // Calculate Manhattan distance to destination
+            let distance_to_dest = ((dest_x as i32 - tile_pos.x as i32).abs() +
+                                    (dest_y as i32 - tile_pos.y as i32).abs()) as u32;
+
+            // Assert that the pop has moved the correct number of steps
+            prop_assert!(distance_moved == num_ticks.min(total_distance),
+                "Pop should move one step per tick until reaching the destination. Expected: {}, Actual: {}", num_ticks.min(total_distance), distance_moved);
+
+            // Assert that the pop is either at the destination or on the way
+            prop_assert!(distance_to_dest == total_distance.saturating_sub(distance_moved),
+                "Pop should be at the correct position on the path to destination");
+
+            // If we've had enough ticks to reach the destination, assert that we're there
+            if num_ticks >= total_distance {
+                prop_assert_eq!(pop.position, dest_pos, "Pop should be at the destination");
+                prop_assert_eq!(pop.destination, None, "Destination should be cleared when reached");
+            } else {
+                prop_assert_eq!(pop.destination, Some(dest_pos), "Destination should remain if not reached");
+            }
+
+            // Assert that the Pop's internal position matches its TilePos
+            prop_assert_eq!(pop.position, *tile_pos, "Pop's internal position should match its TilePos");
+        }
     }
 }

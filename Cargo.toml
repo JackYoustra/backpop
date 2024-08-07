@@ -81,3 +81,6 @@ log = { version = "0.4", features = ["max_level_debug", "release_max_level_warn"
 
 [build-dependencies]
 embed-resource = "1"
+
+[dev-dependencies]
+proptest = "1"

@@ -23,6 +23,7 @@ impl Plugin for TilePlugin {
                 update_fixed_time,
                 update_pop_visuals,
                 handle_speed_input,
+                render_pops,
             ).run_if(in_state(GameState::Playing)))
             .add_systems(FixedUpdate, (
                 update_game_clock,
@@ -47,8 +48,8 @@ pub struct Pop {
     pub(crate) energy: u32,
     pub(crate) job: Option<Job>,
     pub(crate) home: Option<Entity>,
-    position: TilePos,
-    destination: Option<TilePos>,
+    position: Vec2,
+    destination: Option<Vec2>,
     pub state: PopState,
 }
 
@@ -88,6 +89,43 @@ pub struct House {
     position: TilePos,
 }
 
+use crate::constants::{MAP_SIZE, POP_MOVE_SPEED, TILE_SIZE};
+
+// In your TileBasedEntity trait
+trait TileBasedEntity {
+    fn tile_position(&self) -> TilePos;
+    fn world_position(&self) -> Vec2 {
+        let pos = self.tile_position();
+        Vec2::new(
+            pos.x as f32 * TILE_SIZE + TILE_SIZE / 2.0,
+            pos.y as f32 * TILE_SIZE + TILE_SIZE / 2.0
+        )
+    }
+}
+
+impl TileBasedEntity for Job {
+    fn tile_position(&self) -> TilePos {
+        self.position
+    }
+}
+
+impl TileBasedEntity for House {
+    fn tile_position(&self) -> TilePos {
+        self.position
+    }
+}
+
+impl TileBasedEntity for Workplace {
+    fn tile_position(&self) -> TilePos {
+        self.position
+    }
+}
+
+impl TileBasedEntity for Restaurant {
+    fn tile_position(&self) -> TilePos {
+        self.position
+    }
+}
 
 use bevy::prelude::*;
 
@@ -170,50 +208,51 @@ fn update_fixed_time(
 pub struct Building;
 // src/tilemap.rs (continued)
 
-use bevy::math::Vec2;
+use bevy::math::{FloatOrd, Vec2};
 
 
-// Modify the move_pops function
 fn move_pops(
-    mut pop_query: Query<(&mut Pop, &mut TilePos)>,
+    mut pop_query: Query<&mut Pop>,
     tilemap_query: Query<&TilemapSize>,
 ) {
     let map_size = tilemap_query.single();
 
-    for (mut pop, mut tile_pos) in pop_query.iter_mut() {
+    for mut pop in pop_query.iter_mut() {
         if let Some(destination) = pop.destination {
-            let current_pos = Vec2::new(tile_pos.x as f32, tile_pos.y as f32);
-            let dest_pos = Vec2::new(destination.x as f32, destination.y as f32);
-            let diff = dest_pos - current_pos;
+            let to_destination = destination - pop.position;
+            let distance_to_destination = to_destination.length();
 
-            // Decide whether to move in X or Y direction
-            let (new_x, new_y) = if diff.x.abs() >= diff.y.abs() {
-                // Move in X direction
-                (
-                    (current_pos.x + diff.x.signum()).clamp(0.0, (map_size.x - 1) as f32) as u32,
-                    current_pos.y as u32
-                )
-            } else {
-                // Move in Y direction
-                (
-                    current_pos.x as u32,
-                    (current_pos.y + diff.y.signum()).clamp(0.0, (map_size.y - 1) as f32) as u32
-                )
-            };
-
-            let new_tile_pos = TilePos::new(new_x, new_y);
-
-            // Only update if the new position is different
-            if new_tile_pos != *tile_pos {
-                *tile_pos = new_tile_pos;
-                pop.position = *tile_pos;
-            }
-
-            // Check if the pop has reached the destination
-            if *tile_pos == destination {
+            if distance_to_destination < POP_MOVE_SPEED {
+                // If we're closer than one step, just arrive at the destination
+                pop.position = destination;
                 pop.destination = None;
+            } else {
+                // Move in the direction of the destination by POP_MOVE_SPEED
+                let direction = to_destination.normalize();
+                pop.position += direction * POP_MOVE_SPEED;
             }
+
+            // Clamp position to map boundaries
+            pop.position.x = pop.position.x.clamp(0.0, (map_size.x - 1) as f32 * TILE_SIZE);
+            pop.position.y = pop.position.y.clamp(0.0, (map_size.y - 1) as f32 * TILE_SIZE);
         }
+    }
+}
+
+fn render_pops(
+    mut commands: Commands,
+    pop_query: Query<(Entity, &Pop)>,
+    asset_server: Res<AssetServer>,
+) {
+    let pop_texture = asset_server.load("textures/pop.png");
+    for (entity, pop) in pop_query.iter() {
+        commands.entity(entity).insert(SpriteBundle {
+            texture: pop_texture.clone(),
+            transform: Transform::IDENTITY
+                .with_scale(Vec3::new(0.1, 0.1, 1.0))
+                .with_translation(Vec3::new(pop.position.x, pop.position.y, 1.0)),
+            ..default()
+        });
     }
 }
 
@@ -221,8 +260,8 @@ fn spawn_tilemap(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
 ) {
-    let tile_size = TilemapTileSize { x: 16.0, y: 16.0 };
-    let map_size = TilemapSize { x: 32, y: 32 };
+    let tile_size = TilemapTileSize { x: TILE_SIZE, y: TILE_SIZE };
+    let map_size = MAP_SIZE;
     let tilemap_entity = commands.spawn_empty().id();
     let mut tile_storage = TileStorage::empty(map_size);
 
@@ -271,6 +310,11 @@ fn spawn_empty_tile(commands: &mut Commands, tile_pos: TilePos, tilemap_entity: 
 }
 
 fn spawn_pop(commands: &mut Commands, tile_pos: TilePos, tilemap_entity: Entity) -> Entity {
+    let world_pos = Vec2::new(
+        tile_pos.x as f32 + 0.5, // Add 0.5 to center within the tile
+        tile_pos.y as f32 + 0.5  // Add 0.5 to center within the tile
+    );
+
     commands
         .spawn((
             Pop {
@@ -279,15 +323,9 @@ fn spawn_pop(commands: &mut Commands, tile_pos: TilePos, tilemap_entity: Entity)
                 energy: 100,
                 job: None,
                 home: None,
-                position: tile_pos,
+                position: world_pos,
                 destination: None,
                 state: PopState::Idle,
-            },
-            TileBundle {
-                position: tile_pos,
-                tilemap_id: TilemapId(tilemap_entity),
-                texture_index: TileTextureIndex(1), // Assuming 1 is the pop texture
-                ..default()
             },
         ))
         .id()
@@ -330,17 +368,16 @@ fn spawn_workplace(commands: &mut Commands, tile_pos: TilePos, tilemap_entity: E
 }
 
 fn find_nearest_restaurant(
-    pop_position: &TilePos,
+    pop_position: Vec2,
     restaurant_query: &Query<&Restaurant>,
-) -> Option<TilePos> {
+) -> Option<Vec2> {
     restaurant_query
         .iter()
         .min_by_key(|restaurant| {
-            let dx = restaurant.position.x as i32 - pop_position.x as i32;
-            let dy = restaurant.position.y as i32 - pop_position.y as i32;
-            dx * dx + dy * dy
+            let restaurant_pos = Vec2::new(restaurant.position.x as f32, restaurant.position.y as f32);
+            FloatOrd(pop_position.distance_squared(restaurant_pos))
         })
-        .map(|restaurant| restaurant.position)
+        .map(|restaurant| Vec2::new(restaurant.position.x as f32, restaurant.position.y as f32))
 }
 
 fn spawn_restaurant(commands: &mut Commands, tile_pos: TilePos, tilemap_entity: Entity) -> Entity {
@@ -379,13 +416,13 @@ fn update_pops(
         // Update pop state and destination based on needs and time of day
         if pop.hunger > 7000 && pop.state != PopState::Eating {
             pop.state = PopState::Eating;
-            pop.destination = find_nearest_restaurant(&pop.position, &restaurant_query);
+            pop.destination = find_nearest_restaurant(pop.position, &restaurant_query);
         } else if pop.energy < 2000 && pop.state != PopState::Sleeping {
             pop.state = PopState::Sleeping;
-            pop.destination = pop.home.and_then(|home| house_query.get(home).ok().map(|h| h.position));
+            pop.destination = pop.home.and_then(|home| house_query.get(home).ok().map(|h| h.world_position()));
         } else if pop.state != PopState::Working && game_clock.hour() >= 9.0 && game_clock.hour() < 17.0 {
             pop.state = PopState::Working;
-            pop.destination = pop.job.as_ref().map(|job| job.position);
+            pop.destination = pop.job.as_ref().map(|job| job.world_position());
         } else if pop.state == PopState::Working && (game_clock.hour() < 9.0 || game_clock.hour() >= 17.0) {
             pop.state = PopState::Idle;
             pop.destination = None;
@@ -418,16 +455,15 @@ fn update_pops(
                 }
             }
             PopState::Idle => {
-                // In idle state, pops might wander or socialize
+                // Update destination setting to use Vec2
                 if pop.destination.is_none() {
-                    // Randomly set a new destination within a certain range
-                    let random_offset = TilePos::new(
-                        rand::random::<u32>() % 5,
-                        rand::random::<u32>() % 5
+                    let random_offset = Vec2::new(
+                        rand::random::<f32>() * 5.0,
+                        rand::random::<f32>() * 5.0
                     );
-                    pop.destination = Some(TilePos::new(
-                        pop.position.x.saturating_add(random_offset.x).saturating_sub(2).min(map_size.x - 1),
-                        pop.position.y.saturating_add(random_offset.y).saturating_sub(2).min(map_size.y - 1),
+                    pop.destination = Some(Vec2::new(
+                        (pop.position.x + random_offset.x - 2.0).clamp(0.0, (map_size.x - 1) as f32),
+                        (pop.position.y + random_offset.y - 2.0).clamp(0.0, (map_size.y - 1) as f32),
                     ));
                 }
                 // Idle state consumes energy and increases hunger slightly
@@ -514,9 +550,12 @@ fn assign_jobs_and_housing(
 
         // Assign home if homeless
         if pop.home.is_none() {
-            if let Some((house_entity, position)) = housing_market.available_houses.pop() {
+            if let Some((house_entity, tile_position)) = housing_market.available_houses.pop() {
                 pop.home = Some(house_entity);
-                pop.destination = Some(position);
+                pop.destination = Some(Vec2::new(
+                    tile_position.x as f32 * TILE_SIZE + TILE_SIZE / 2.0,
+                    tile_position.y as f32 * TILE_SIZE + TILE_SIZE / 2.0
+                ));
                 // Update house
                 if let Ok(mut house) = house_query.get_mut(house_entity) {
                     house.residents.push(pop_entity);
@@ -555,7 +594,7 @@ fn manage_markets(
     housing_market.available_houses.clear();
     for (entity, house) in house_query.iter() {
         if house.residents.len() < house.capacity as usize {
-            housing_market.available_houses.push((entity, house.position));
+            housing_market.available_houses.push((entity, house.tile_position()));
         }
     }
 }
@@ -582,24 +621,28 @@ fn handle_speed_input(
 mod tests {
     use proptest::prelude::*;
     use bevy::prelude::*;
-    use bevy_ecs_tilemap::prelude::*;
+    use bevy_ecs_tilemap::map::TilemapSize;
     use crate::tilemap::{move_pops, Pop};
+    use crate::constants::{TILE_SIZE, MAP_SIZE, POP_MOVE_SPEED};
 
     proptest! {
         #[test]
         fn test_pop_movement(
-            start_x in 0u32..20,
-            start_y in 0u32..20,
-            dest_x in 0u32..20,
-            dest_y in 0u32..20,
+            start_x in 0.0f32..(MAP_SIZE.x as f32),
+            start_y in 0.0f32..(MAP_SIZE.y as f32),
+            dest_x in 0.0f32..(MAP_SIZE.x as f32),
+            dest_y in 0.0f32..(MAP_SIZE.y as f32),
             num_ticks in 1u32..50
         ) {
             let mut app = App::new();
             app.add_plugins(MinimalPlugins)
                .add_systems(Update, move_pops);
 
-            let start_pos = TilePos::new(start_x, start_y);
-            let dest_pos = TilePos::new(dest_x, dest_y);
+            let start_pos = Vec2::new(start_x, start_y);
+            let dest_pos = Vec2::new(dest_x, dest_y);
+
+            // Spawn the TilemapSize
+            app.world_mut().spawn(TilemapSize { x: MAP_SIZE.x, y: MAP_SIZE.y });
 
             let pop_entity = app.world_mut().spawn((
                 Pop {
@@ -607,7 +650,6 @@ mod tests {
                     destination: Some(dest_pos),
                     ..Default::default()
                 },
-                start_pos,
             )).id();
 
             // Run the simulation for the generated number of ticks
@@ -615,38 +657,37 @@ mod tests {
                 app.update();
             }
 
-            let total_distance = ((dest_x as i32 - start_x as i32).abs() +
-                                  (dest_y as i32 - start_y as i32).abs()) as u32;
+            let total_distance = start_pos.distance(dest_pos);
 
-            let mut query = app.world_mut().query::<(&Pop, &TilePos)>();
-            let (pop, tile_pos) = query.get(app.world_mut(), pop_entity).unwrap();
+            let pop = app.world().get::<Pop>(pop_entity).unwrap();
 
-            // Calculate Manhattan distance moved
-            let distance_moved = ((tile_pos.x as i32 - start_x as i32).abs() +
-                                  (tile_pos.y as i32 - start_y as i32).abs()) as u32;
+            // Calculate distance moved
+            let distance_moved = start_pos.distance(pop.position);
 
-            // Calculate Manhattan distance to destination
-            let distance_to_dest = ((dest_x as i32 - tile_pos.x as i32).abs() +
-                                    (dest_y as i32 - tile_pos.y as i32).abs()) as u32;
+            // Calculate distance to destination
+            let distance_to_dest = pop.position.distance(dest_pos);
 
-            // Assert that the pop has moved the correct number of steps
-            prop_assert!(distance_moved == num_ticks.min(total_distance),
-                "Pop should move one step per tick until reaching the destination. Expected: {}, Actual: {}", num_ticks.min(total_distance), distance_moved);
+            // Define movement speed (this should match the speed in your move_pops function)
+            let speed = 0.1 * TILE_SIZE;
+
+            // Expected distance moved (capped at total distance)
+            let expected_distance = (POP_MOVE_SPEED * num_ticks as f32).min(total_distance);
+
+            // Assert that the pop has moved the correct distance (with some tolerance for float comparisons)
+            prop_assert!((distance_moved - expected_distance).abs() < 0.001,
+                "Pop should move the correct distance. Expected: {}, Actual: {}", expected_distance, distance_moved);
 
             // Assert that the pop is either at the destination or on the way
-            prop_assert!(distance_to_dest == total_distance.saturating_sub(distance_moved),
+            prop_assert!(distance_to_dest <= total_distance - distance_moved + 0.001,
                 "Pop should be at the correct position on the path to destination");
 
             // If we've had enough ticks to reach the destination, assert that we're there
-            if num_ticks >= total_distance {
-                prop_assert_eq!(pop.position, dest_pos, "Pop should be at the destination");
+            if (speed * num_ticks as f32) >= total_distance {
+                prop_assert!((pop.position - dest_pos).length() < 0.001, "Pop should be at the destination");
                 prop_assert_eq!(pop.destination, None, "Destination should be cleared when reached");
             } else {
                 prop_assert_eq!(pop.destination, Some(dest_pos), "Destination should remain if not reached");
             }
-
-            // Assert that the Pop's internal position matches its TilePos
-            prop_assert_eq!(pop.position, *tile_pos, "Pop's internal position should match its TilePos");
         }
     }
 }

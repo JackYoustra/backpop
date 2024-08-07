@@ -7,6 +7,7 @@ mod menu;
 mod player;
 mod tilemap;
 mod ui;
+mod constants;
 
 use crate::actions::ActionsPlugin;
 use crate::audio::InternalAudioPlugin;

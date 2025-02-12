@@ -11,7 +11,7 @@ pub const FOLLOW_EPSILON: f32 = 5.;
 
 pub struct ActionsPlugin;
 
-// This plugin listens for keyboard input and converts the input into Actions
+// This plugin listens for keyboard input and converts the input into Actions.
 // Actions can then be used as a resource in other systems to act on the player input.
 impl Plugin for ActionsPlugin {
     fn build(&self, app: &mut App) {
@@ -43,8 +43,7 @@ pub fn set_movement_actions(
 
     if let Some(touch_position) = touch_input.first_pressed_position() {
         let (camera, camera_transform) = camera.single();
-        if let Some(touch_position) = camera.viewport_to_world_2d(camera_transform, touch_position)
-        {
+        if let Ok(touch_position) = camera.viewport_to_world_2d(camera_transform, touch_position) {
             let diff = touch_position - player.single().translation.xy();
             if diff.length() > FOLLOW_EPSILON {
                 player_movement = diff.normalize();

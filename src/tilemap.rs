@@ -198,7 +198,12 @@ fn update_fixed_time(
     mut fixed_time: ResMut<Time<Fixed>>,
 ) {
     if !game_clock.paused {
-        fixed_time.set_timestep_hz(game_clock.ticks_per_second());
+        let tps = game_clock.ticks_per_second();
+        if tps.is_finite() {
+            fixed_time.set_timestep_hz(tps);
+        } else {
+            fixed_time.set_timestep_hz(0.0);
+        }
     } else {
         fixed_time.set_timestep_hz(0.0);
     }
@@ -244,15 +249,17 @@ fn render_pops(
     pop_query: Query<(Entity, &Pop)>,
     asset_server: Res<AssetServer>,
 ) {
-    let pop_texture = asset_server.load("textures/pop.png");
+    let pop_texture = asset_server.load("textures/pop.webp");
     for (entity, pop) in pop_query.iter() {
-        commands.entity(entity).insert(SpriteBundle {
-            texture: pop_texture.clone(),
-            transform: Transform::IDENTITY
+        commands.entity(entity).insert((
+            Transform::IDENTITY
                 .with_scale(Vec3::new(0.1, 0.1, 1.0))
                 .with_translation(Vec3::new(pop.position.x, pop.position.y, 1.0)),
-            ..default()
-        });
+            Sprite {
+                image: pop_texture.clone(),
+                ..default()
+            },
+        ));
     }
 }
 
